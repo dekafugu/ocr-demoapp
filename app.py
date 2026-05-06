@@ -4,6 +4,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from PIL import Image
+from streamlit_cropper import st_cropper
 
 # =====================
 # ページ設定
