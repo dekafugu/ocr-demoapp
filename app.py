@@ -375,20 +375,30 @@ if img_source:
         img_array = np.array(cropped)
         img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
 
+        # スマホ写真対策：幅600pxに統一
+        target_w = 600
+        h, w = img_bgr.shape[:2]
+        if w > target_w:
+            img_bgr = cv2.resize(img_bgr, (target_w, int(h * target_w / w)))
+
         with st.spinner("解析中..."):
-            results = run_ocr(img_bgr, model)
+            char_imgs = segment_digits(img_bgr)
+            results = []
+            for char_img in char_imgs:
+                digit, conf = predict_digit(model, char_img)
+                results.append((digit, conf, char_img))
 
         if not results:
             st.warning("数字が検出されませんでした。範囲を調整してみてください。")
         else:
             digits_html = ""
-            for digit, conf in results:
+            for digit, conf, _ in results:
                 if conf >= 0.95:
                     digits_html += f'<span class="digit-ok">{digit}</span>'
                 else:
                     digits_html += f'<span class="digit-warn">{digit}</span>'
 
-            has_warn = any(conf < 0.95 for _, conf in results)
+            has_warn = any(conf < 0.95 for _, conf, _ in results)
 
             st.markdown(f"""
             <div class="result-card">
@@ -400,7 +410,7 @@ if img_source:
             """, unsafe_allow_html=True)
 
             bars_html = ""
-            for digit, conf in results:
+            for digit, conf, _ in results:
                 pct = int(conf * 100)
                 color = "#22C55E" if conf >= 0.95 else "#EF4444"
                 d = digit if conf >= 0.95 else "?"
@@ -419,4 +429,15 @@ if img_source:
             else:
                 status_box = '<div class="ok-box">✓ すべての数字を高精度で読み取りました</div>'
 
-            st.markdown(bars_html + "</div>" + status_box + "</div>", unsafe_allow_html=True)
+            # 切り出し画像を表示
+            st.markdown("</div>" + status_box + "</div>", unsafe_allow_html=True)
+            st.markdown('<div class="result-label" style="margin-top:1.5rem;">切り出し画像（デバッグ用）</div>', unsafe_allow_html=True)
+            cols = st.columns(len(results))
+            for i, (digit, conf, char_img) in enumerate(results):
+                with cols[i]:
+                    char_pil = Image.fromarray(cv2.cvtColor(char_img, cv2.COLOR_BGR2RGB))
+                    st.image(char_pil, width=60)
+                    label = digit if conf >= 0.95 else "?"
+                    st.markdown(f"<center>{label}</center>", unsafe_allow_html=True)
+
+            st.markdown(bars_html, unsafe_allow_html=True)
