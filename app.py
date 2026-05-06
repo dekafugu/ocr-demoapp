@@ -351,11 +351,18 @@ st.markdown("""
 
 model = load_model()
 
-st.markdown('<div class="upload-label">① 画像をアップロード</div>', unsafe_allow_html=True)
-uploaded = st.file_uploader("", type=["jpg", "jpeg", "png"])
+tab1, tab2 = st.tabs(["📷 カメラで撮る", "📁 ファイルをアップロード"])
 
-if uploaded:
-    pil_img = Image.open(uploaded).convert("RGB")
+with tab1:
+    camera_img = st.camera_input("カメラで撮影")
+
+with tab2:
+    uploaded = st.file_uploader("画像を選択", type=["jpg", "jpeg", "png"])
+
+img_source = camera_img if camera_img else uploaded
+
+if img_source:
+    pil_img = Image.open(img_source).convert("RGB")
 
     st.markdown('<div class="upload-label">② 読み取りたい部分をドラッグで選択</div>', unsafe_allow_html=True)
     cropped = st_cropper(pil_img, realtime_update=True, box_color="#111111", aspect_ratio=None)
