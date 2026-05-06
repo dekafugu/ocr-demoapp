@@ -4,7 +4,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 from PIL import Image
-from streamlit_cropper import st_cropper
 
 # =====================
 # ページ設定
@@ -12,7 +11,7 @@ from streamlit_cropper import st_cropper
 st.set_page_config(
     page_title="手書き数字 読み取りAI",
     page_icon="🔢",
-    layout="centered"
+    layout="wide"
 )
 
 # =====================
@@ -24,10 +23,45 @@ st.markdown("""
 
 html, body, [class*="css"] {
     font-family: 'Noto Sans JP', sans-serif;
-    background-color: #F7F7F5;
+    background-color: #F7F7F5 !important;
+    color: #111 !important;
 }
 
-.main { background-color: #F7F7F5; }
+.main, .block-container, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
+    background-color: #F7F7F5 !important;
+}
+
+/* ダークモード強制上書き */
+[data-theme="dark"] html,
+[data-theme="dark"] body {
+    background-color: #F7F7F5 !important;
+    color: #111 !important;
+}
+
+/* スマホ専用 */
+.block-container {
+    max-width: 100% !important;
+    padding: 0.5rem 1rem !important;
+}
+
+@media (max-width: 768px) {
+    .hero h1 {
+        font-size: 1.5rem !important;
+    }
+    .hero p {
+        font-size: 0.85rem !important;
+    }
+    .result-number {
+        font-size: 2.5rem !important;
+    }
+    .result-card {
+        padding: 1.2rem 1rem !important;
+    }
+    div.stButton > button {
+        font-size: 1.1rem !important;
+        padding: 1rem !important;
+    }
+}
 
 /* タイトル */
 .hero {
