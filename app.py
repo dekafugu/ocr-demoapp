@@ -363,18 +363,14 @@ def predict_with_trocr(processor, model, pil_img: Image.Image) -> tuple[str, flo
     # 数字のみ抽出
     digits_only = ''.join(c for c in text if c.isdigit())
 
-    # スコアから信頼度を概算（transition_scores使用）
+    # スコアから信頼度を概算
     try:
-        import torch.nn.functional as F
-        transition_scores = model.compute_transition_scores(
-            outputs.sequences, outputs.scores, normalize_logits=True
-        )
-        # 各トークンの平均確率
-        avg_log_prob = transition_scores[0].mean().item()
-        confidence = float(np.exp(avg_log_prob))
+        import torch
+        scores = outputs.sequences_scores  # beam searchの総合スコア
+        confidence = float(torch.exp(scores[0]).item())
         confidence = min(max(confidence, 0.0), 1.0)
     except Exception:
-        confidence = 0.8  # fallback
+        confidence = 0.8
 
     return digits_only, confidence
 
