@@ -290,14 +290,14 @@ def segment_digits(binary_img: np.ndarray, original_bgr: np.ndarray) -> list[np.
     for cnt in contours:
         x, y, w, h = cv2.boundingRect(cnt)
         # フィルタ条件（罫線・ゴミ除去）
-        if w < 8 or h < 20:
+        if w < 4 or h < 10:  # 1や細い数字を拾う
             continue
-        if w / h > 3.0:  # 横長すぎ → 罫線
+        if w / h > 4.0:  # 罫線除去の閾値を緩める
             continue
-        if h > h_img * 0.9:  # 画像全体の高さに近い → ノイズ
+        if h > h_img * 0.95:
             continue
         area = cv2.contourArea(cnt)
-        if area < 80:
+        if area < 30:  # 小さい数字も拾う
             continue
         rects.append((x, y, w, h))
 
@@ -324,7 +324,7 @@ def segment_digits(binary_img: np.ndarray, original_bgr: np.ndarray) -> list[np.
     # 各数字を切り出してPIL画像に変換
     char_images = []
     for x, y, w, h in merged:
-        pad = 6
+        pad = 3
         x1 = max(0, x - pad)
         y1 = max(0, y - pad)
         x2 = min(original_bgr.shape[1], x + w + pad)
