@@ -1,9 +1,7 @@
 import streamlit as st
 import cv2
 import numpy as np
-import torch
-import torch.nn as nn
-from PIL import Image
+from PIL import Image, ImageOps, ImageFilter
 from streamlit_cropper import st_cropper
 
 # =====================
@@ -32,39 +30,19 @@ html, body, [class*="css"] {
     background-color: #F7F7F5 !important;
 }
 
-/* ダークモード強制上書き */
-[data-theme="dark"] html,
-[data-theme="dark"] body {
-    background-color: #F7F7F5 !important;
-    color: #111 !important;
-}
-
-/* スマホ専用 */
 .block-container {
     max-width: 100% !important;
     padding: 0.5rem 1rem !important;
 }
 
 @media (max-width: 768px) {
-    .hero h1 {
-        font-size: 1.5rem !important;
-    }
-    .hero p {
-        font-size: 0.85rem !important;
-    }
-    .result-number {
-        font-size: 2.5rem !important;
-    }
-    .result-card {
-        padding: 1.2rem 1rem !important;
-    }
-    div.stButton > button {
-        font-size: 1.1rem !important;
-        padding: 1rem !important;
-    }
+    .hero h1 { font-size: 1.5rem !important; }
+    .hero p { font-size: 0.85rem !important; }
+    .result-number { font-size: 2.5rem !important; }
+    .result-card { padding: 1.2rem 1rem !important; }
+    div.stButton > button { font-size: 1.1rem !important; padding: 1rem !important; }
 }
 
-/* タイトル */
 .hero {
     text-align: center;
     padding: 2.5rem 0 1.5rem 0;
@@ -82,7 +60,6 @@ html, body, [class*="css"] {
     margin: 0;
 }
 
-/* アップロードエリア */
 .upload-label {
     font-size: 0.85rem;
     font-weight: 700;
@@ -92,7 +69,6 @@ html, body, [class*="css"] {
     margin-bottom: 0.5rem;
 }
 
-/* 結果カード */
 .result-card {
     background: #fff;
     border-radius: 16px;
@@ -121,10 +97,7 @@ html, body, [class*="css"] {
     margin-bottom: 0.8rem;
 }
 
-.digit-ok {
-    color: #111;
-}
-
+.digit-ok { color: #111; }
 .digit-warn {
     color: #E03E3E;
     background: #FFF0F0;
@@ -132,9 +105,7 @@ html, body, [class*="css"] {
     padding: 0 4px;
 }
 
-.confidence-bar-wrap {
-    margin-top: 1rem;
-}
+.confidence-bar-wrap { margin-top: 1rem; }
 
 .conf-row {
     display: flex;
@@ -199,7 +170,6 @@ html, body, [class*="css"] {
     margin: 1.2rem 0;
 }
 
-/* ボタン */
 div.stButton > button {
     background: #111;
     color: #fff;
@@ -213,131 +183,200 @@ div.stButton > button {
     cursor: pointer;
     transition: background 0.2s;
 }
-div.stButton > button:hover {
-    background: #333;
-}
+div.stButton > button:hover { background: #333; }
 
-/* アップロードボックス */
 [data-testid="stFileUploader"] {
     background: #fff;
     border-radius: 12px;
     border: 2px dashed #DEDEDA;
     padding: 1rem;
 }
+
+.preprocess-preview {
+    border-radius: 10px;
+    border: 1px solid #E8E8E4;
+    overflow: hidden;
+}
 </style>
 """, unsafe_allow_html=True)
 
 
 # =====================
-# モデル定義
-# =====================
-class MnistCNN(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.features = nn.Sequential(
-            nn.Conv2d(1, 32, 3, padding=1), nn.ReLU(),
-            nn.Conv2d(32, 64, 3, padding=1), nn.ReLU(),
-            nn.MaxPool2d(2),
-            nn.Dropout(0.25),
-        )
-        self.classifier = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(64 * 14 * 14, 128), nn.ReLU(),
-            nn.Dropout(0.5),
-            nn.Linear(128, 10),
-        )
-
-    def forward(self, x):
-        return self.classifier(self.features(x))
-
-
-# =====================
-# モデルロード（キャッシュ）
+# TrOCR モデルロード
 # =====================
 @st.cache_resource
-def load_model():
-    from torchvision import datasets, transforms
-    from torch.utils.data import DataLoader
-
-    model = MnistCNN()
-    model_path = "mnist_model.pth"
-
-    if __import__('os').path.exists(model_path):
-        model.load_state_dict(torch.load(model_path, map_location="cpu"))
-    else:
-        st.info("初回のみ学習します。少々お待ちください...")
-        transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.1307,), (0.3081,))
-        ])
-        train_data = datasets.MNIST(".", train=True, download=True, transform=transform)
-        loader = DataLoader(train_data, batch_size=64, shuffle=True)
-        optimizer = torch.optim.Adam(model.parameters())
-        loss_fn = nn.CrossEntropyLoss()
-        for _ in range(5):
-            model.train()
-            for images, labels in loader:
-                optimizer.zero_grad()
-                loss = loss_fn(model(images), labels)
-                loss.backward()
-                optimizer.step()
-        torch.save(model.state_dict(), model_path)
-
+def load_trocr():
+    from transformers import TrOCRProcessor, VisionEncoderDecoderModel
+    st.info("TrOCRモデルを読み込み中... 初回のみ時間がかかります")
+    processor = TrOCRProcessor.from_pretrained("microsoft/trocr-base-handwritten")
+    model = VisionEncoderDecoderModel.from_pretrained("microsoft/trocr-base-handwritten")
     model.eval()
-    return model
+    return processor, model
 
 
 # =====================
-# OCR処理
+# 前処理パイプライン
 # =====================
-def predict_digit(model, char_img):
-    if len(char_img.shape) == 3:
-        gray = cv2.cvtColor(char_img, cv2.COLOR_BGR2GRAY)
+def preprocess_image(img_bgr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """
+    書類写真向けの前処理。
+    戻り値: (前処理済みBGR画像, グレースケール二値化画像)
+    """
+    # 1. リサイズ（長辺1200px基準）
+    h, w = img_bgr.shape[:2]
+    max_side = 1200
+    if max(h, w) > max_side:
+        scale = max_side / max(h, w)
+        img_bgr = cv2.resize(img_bgr, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_LANCZOS4)
+
+    # 2. グレースケール変換
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+
+    # 3. ノイズ除去（Non-local Means）
+    denoised = cv2.fastNlMeansDenoising(gray, h=10, templateWindowSize=7, searchWindowSize=21)
+
+    # 4. CLAHE でコントラスト均一化（照明ムラ対策）
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    enhanced = clahe.apply(denoised)
+
+    # 5. 適応的二値化（グローバルOtsuより書類写真に強い）
+    binary = cv2.adaptiveThreshold(
+        enhanced, 255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        blockSize=25,
+        C=10
+    )
+
+    # 6. モルフォロジー処理（細かいゴミ除去）
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    cleaned = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
+
+    return img_bgr, cleaned
+
+
+def deskew(img_gray: np.ndarray) -> np.ndarray:
+    """傾き補正"""
+    coords = np.column_stack(np.where(img_gray < 128))
+    if len(coords) < 10:
+        return img_gray
+    angle = cv2.minAreaRect(coords)[-1]
+    if angle < -45:
+        angle = -(90 + angle)
     else:
-        gray = char_img
-    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    resized = cv2.resize(binary, (28, 28), interpolation=cv2.INTER_AREA)
-    tensor = torch.tensor(resized, dtype=torch.float32) / 255.0
-    tensor = tensor.unsqueeze(0).unsqueeze(0)
-    tensor = (tensor - 0.1307) / 0.3081
-    with torch.no_grad():
-        output = model(tensor)
-        probs = torch.softmax(output, dim=1)
-        confidence = probs.max().item()
-        digit = str(output.argmax(dim=1).item())
-    return digit, confidence
+        angle = -angle
+    if abs(angle) < 0.5:
+        return img_gray
+    (h, w) = img_gray.shape
+    center = (w // 2, h // 2)
+    M = cv2.getRotationMatrix2D(center, angle, 1.0)
+    rotated = cv2.warpAffine(img_gray, M, (w, h), flags=cv2.INTER_CUBIC,
+                              borderMode=cv2.BORDER_REPLICATE)
+    return rotated
 
 
-def segment_digits(roi_img):
-    gray = cv2.cvtColor(roi_img, cv2.COLOR_BGR2GRAY)
-    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+def segment_digits(binary_img: np.ndarray, original_bgr: np.ndarray) -> list[np.ndarray]:
+    """
+    二値化画像から数字を個別にセグメント。
+    TrOCRに渡すのでカラー画像（PIL）として返す。
+    """
+    # 反転（黒背景・白文字 → 白背景・黒文字でcontour検出）
+    inv = cv2.bitwise_not(binary_img)
+
+    contours, _ = cv2.findContours(inv, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    h_img, w_img = binary_img.shape
     rects = []
     for cnt in contours:
         x, y, w, h = cv2.boundingRect(cnt)
-        if w > 5 and h > 15 and w / h > 0.35:
-            rects.append((x, y, w, h))
+        # フィルタ条件（罫線・ゴミ除去）
+        if w < 8 or h < 20:
+            continue
+        if w / h > 3.0:  # 横長すぎ → 罫線
+            continue
+        if h > h_img * 0.9:  # 画像全体の高さに近い → ノイズ
+            continue
+        area = cv2.contourArea(cnt)
+        if area < 80:
+            continue
+        rects.append((x, y, w, h))
+
     rects.sort(key=lambda b: b[0])
-    char_imgs = []
-    for x, y, w, h in rects:
-        pad = 4
-        char_img = roi_img[
-            max(0, y - pad): y + h + pad,
-            max(0, x - pad): x + w + pad
-        ].copy()
-        char_imgs.append(char_img)
-    return char_imgs
+
+    # 近接矩形をマージ（くっついた数字を個別化）
+    merged = []
+    for rect in rects:
+        if not merged:
+            merged.append(list(rect))
+            continue
+        prev = merged[-1]
+        # x方向の距離が近ければマージしない（個別として扱う）
+        gap = rect[0] - (prev[0] + prev[2])
+        if gap < -5:  # 重なっている → マージ
+            new_x = min(prev[0], rect[0])
+            new_y = min(prev[1], rect[1])
+            new_r = max(prev[0] + prev[2], rect[0] + rect[2])
+            new_b = max(prev[1] + prev[3], rect[1] + rect[3])
+            merged[-1] = [new_x, new_y, new_r - new_x, new_b - new_y]
+        else:
+            merged.append(list(rect))
+
+    # 各数字を切り出してPIL画像に変換
+    char_images = []
+    for x, y, w, h in merged:
+        pad = 6
+        x1 = max(0, x - pad)
+        y1 = max(0, y - pad)
+        x2 = min(original_bgr.shape[1], x + w + pad)
+        y2 = min(original_bgr.shape[0], y + h + pad)
+        crop_bgr = original_bgr[y1:y2, x1:x2]
+        crop_rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
+        pil = Image.fromarray(crop_rgb)
+        char_images.append(pil)
+
+    return char_images
 
 
-def run_ocr(img_array, model):
-    char_imgs = segment_digits(img_array)
-    if not char_imgs:
-        return [], []
-    results = []
-    for char_img in char_imgs:
-        digit, conf = predict_digit(model, char_img)
-        results.append((digit, conf))
-    return results
+def predict_with_trocr(processor, model, pil_img: Image.Image) -> tuple[str, float]:
+    """TrOCRで1文字（数字）を推論"""
+    import torch
+
+    # TrOCRは384x384 or 224x224の入力を想定、RGBが必要
+    img_rgb = pil_img.convert("RGB")
+
+    pixel_values = processor(images=img_rgb, return_tensors="pt").pixel_values
+
+    with torch.no_grad():
+        # beam searchで精度向上
+        outputs = model.generate(
+            pixel_values,
+            num_beams=5,
+            max_new_tokens=8,
+            output_scores=True,
+            return_dict_in_generate=True,
+        )
+
+    # テキスト取得
+    generated_ids = outputs.sequences
+    text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
+
+    # 数字のみ抽出
+    digits_only = ''.join(c for c in text if c.isdigit())
+
+    # スコアから信頼度を概算（transition_scores使用）
+    try:
+        import torch.nn.functional as F
+        transition_scores = model.compute_transition_scores(
+            outputs.sequences, outputs.scores, normalize_logits=True
+        )
+        # 各トークンの平均確率
+        avg_log_prob = transition_scores[0].mean().item()
+        confidence = float(np.exp(avg_log_prob))
+        confidence = min(max(confidence, 0.0), 1.0)
+    except Exception:
+        confidence = 0.8  # fallback
+
+    return digits_only, confidence
 
 
 # =====================
@@ -346,11 +385,11 @@ def run_ocr(img_array, model):
 st.markdown("""
 <div class="hero">
     <h1>🔢 手書き数字 読み取りAI</h1>
-    <p>書類の手書き数字を、AIが瞬時にデータ化します</p>
+    <p>書類の手書き数字を、AIが瞬時にデータ化します（TrOCR搭載）</p>
 </div>
 """, unsafe_allow_html=True)
 
-model = load_model()
+processor, model = load_trocr()
 
 tab1, tab2 = st.tabs(["📷 カメラで撮る", "📁 ファイルをアップロード"])
 
@@ -375,69 +414,82 @@ if img_source:
         img_array = np.array(cropped)
         img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
 
-        # スマホ写真対策：幅600pxに統一
-        target_w = 600
-        h, w = img_bgr.shape[:2]
-        if w > target_w:
-            img_bgr = cv2.resize(img_bgr, (target_w, int(h * target_w / w)))
+        with st.spinner("前処理中..."):
+            img_bgr_processed, binary = preprocess_image(img_bgr)
+            binary_deskewed = deskew(binary)
 
-        with st.spinner("解析中..."):
-            char_imgs = segment_digits(img_bgr)
-            results = []
-            for char_img in char_imgs:
-                digit, conf = predict_digit(model, char_img)
-                results.append((digit, conf, char_img))
+        # デバッグ用前処理プレビュー
+        with st.expander("前処理プレビュー（デバッグ用）"):
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.caption("元画像")
+                st.image(cropped, use_container_width=True)
+            with col_b:
+                st.caption("二値化・ノイズ除去後")
+                st.image(binary_deskewed, use_container_width=True, clamp=True)
 
-        if not results:
-            st.warning("数字が検出されませんでした。範囲を調整してみてください。")
-        else:
-            digits_html = ""
-            for digit, conf, _ in results:
-                if conf >= 0.95:
-                    digits_html += f'<span class="digit-ok">{digit}</span>'
-                else:
-                    digits_html += f'<span class="digit-warn">{digit}</span>'
+        with st.spinner("数字を検出・推論中..."):
+            char_pils = segment_digits(binary_deskewed, img_bgr_processed)
 
-            has_warn = any(conf < 0.95 for _, conf, _ in results)
-
-            st.markdown(f"""
-            <div class="result-card">
-                <div class="result-label">読み取り結果</div>
-                <div class="result-number">{digits_html}</div>
-                <div class="divider"></div>
-                <div class="result-label">確信度</div>
-                <div class="confidence-bar-wrap">
-            """, unsafe_allow_html=True)
-
-            bars_html = ""
-            for digit, conf, _ in results:
-                pct = int(conf * 100)
-                color = "#22C55E" if conf >= 0.95 else "#EF4444"
-                d = digit if conf >= 0.95 else "?"
-                bars_html += f"""
-                <div class="conf-row">
-                    <div class="conf-digit">{d}</div>
-                    <div class="conf-bar-bg">
-                        <div class="conf-bar-fill" style="width:{pct}%; background:{color};"></div>
-                    </div>
-                    <div class="conf-val">{pct}%</div>
-                </div>
-                """
-
-            if has_warn:
-                status_box = '<div class="warn-box">⚠ 赤字の数字は確認が必要です</div>'
+            if not char_pils:
+                st.warning("数字が検出されませんでした。範囲や明るさを調整してみてください。")
             else:
-                status_box = '<div class="ok-box">✓ すべての数字を高精度で読み取りました</div>'
+                results = []
+                for pil in char_pils:
+                    digit, conf = predict_with_trocr(processor, model, pil)
+                    results.append((digit, conf, pil))
 
-            # 切り出し画像を表示
-            st.markdown("</div>" + status_box + "</div>", unsafe_allow_html=True)
-            st.markdown('<div class="result-label" style="margin-top:1.5rem;">切り出し画像（デバッグ用）</div>', unsafe_allow_html=True)
-            cols = st.columns(len(results))
-            for i, (digit, conf, char_img) in enumerate(results):
-                with cols[i]:
-                    char_pil = Image.fromarray(cv2.cvtColor(char_img, cv2.COLOR_BGR2RGB))
-                    st.image(char_pil, width=60)
-                    label = digit if conf >= 0.95 else "?"
-                    st.markdown(f"<center>{label}</center>", unsafe_allow_html=True)
+                # --- 結果表示 ---
+                digits_html = ""
+                for digit, conf, _ in results:
+                    display = digit if digit else "?"
+                    if conf >= 0.85:
+                        digits_html += f'<span class="digit-ok">{display}</span>'
+                    else:
+                        digits_html += f'<span class="digit-warn">{display}</span>'
 
-            st.markdown(bars_html, unsafe_allow_html=True)
+                has_warn = any(conf < 0.85 for _, conf, _ in results)
+
+                st.markdown(f"""
+                <div class="result-card">
+                    <div class="result-label">読み取り結果</div>
+                    <div class="result-number">{digits_html}</div>
+                    <div class="divider"></div>
+                    <div class="result-label">確信度</div>
+                    <div class="confidence-bar-wrap">
+                """, unsafe_allow_html=True)
+
+                bars_html = ""
+                for digit, conf, _ in results:
+                    pct = int(conf * 100)
+                    color = "#22C55E" if conf >= 0.85 else "#EF4444"
+                    label = digit if digit else "?"
+                    bars_html += f"""
+                    <div class="conf-row">
+                        <div class="conf-digit">{label}</div>
+                        <div class="conf-bar-bg">
+                            <div class="conf-bar-fill" style="width:{pct}%; background:{color};"></div>
+                        </div>
+                        <div class="conf-val">{pct}%</div>
+                    </div>
+                    """
+
+                if has_warn:
+                    status_box = '<div class="warn-box">⚠ 赤字の数字は確認が必要です</div>'
+                else:
+                    status_box = '<div class="ok-box">✓ すべての数字を高精度で読み取りました</div>'
+
+                st.markdown(bars_html + "</div></div>" + status_box, unsafe_allow_html=True)
+
+                # 切り出し画像
+                st.markdown('<div class="result-label" style="margin-top:1.5rem;">切り出し画像（デバッグ用）</div>', unsafe_allow_html=True)
+                cols = st.columns(len(results))
+                for i, (digit, conf, pil) in enumerate(results):
+                    with cols[i]:
+                        st.image(pil, width=60)
+                        label = digit if digit else "?"
+                        color = "#22C55E" if conf >= 0.85 else "#EF4444"
+                        st.markdown(
+                            f"<center style='font-family:DM Mono,monospace;color:{color};font-weight:bold'>{label}</center>",
+                            unsafe_allow_html=True
+                        )
