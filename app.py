@@ -361,7 +361,9 @@ def predict_with_trocr(processor, model, pil_img: Image.Image) -> tuple[str, flo
     text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
 
     # 数字のみ抽出
-    digits_only = ''.join(c for c in text if c.isdigit())
+    # l→1、I→1、O→0 の置換を追加
+    text_fixed = text.replace('l', '1').replace('I', '1').replace('i', '1').replace('O', '0').replace('o', '0')
+    digits_only = ''.join(c for c in text_fixed if c.isdigit())
 
     # スコアから信頼度を概算
     try:
