@@ -208,8 +208,8 @@ div.stButton > button:hover { background: #333; }
 def load_trocr():
     from transformers import TrOCRProcessor, VisionEncoderDecoderModel
     st.info("TrOCRモデルを読み込み中... 初回のみ時間がかかります")
-    processor = TrOCRProcessor.from_pretrained("microsoft/trocr-small-handwritten")
-    model = VisionEncoderDecoderModel.from_pretrained("microsoft/trocr-small-handwritten")
+    processor = TrOCRProcessor.from_pretrained("microsoft/trocr-base-handwritten")
+    model = VisionEncoderDecoderModel.from_pretrained("microsoft/trocr-base-handwritten")
     model.eval()
     return processor, model
 
