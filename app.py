@@ -238,6 +238,7 @@ def deskew(img_gray: np.ndarray) -> np.ndarray:
 # =====================
 def predict_with_trocr(processor, model, pil_img: Image.Image) -> tuple:
     import torch
+    import torch.nn.functional as F
 
     img_rgb = pil_img.convert("RGB")
     pixel_values = processor(images=img_rgb, return_tensors="pt").pixel_values
@@ -245,22 +246,38 @@ def predict_with_trocr(processor, model, pil_img: Image.Image) -> tuple:
     with torch.no_grad():
         outputs = model.generate(
             pixel_values,
-            num_beams=4,
+            num_beams=1,             # スコア計算を単純化するため1に（beam searchでも計算可能ですが複雑になります）
             max_new_tokens=16,
-            output_scores=True,
+            output_scores=True,      # 各トークンのスコアを出力
             return_dict_in_generate=True,
         )
 
-    text = processor.batch_decode(outputs.sequences, skip_special_tokens=True)[0].strip()
+    # テキストの復元
+    generated_ids = outputs.sequences
+    text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
 
-    # 誤認識しやすい文字を数字に置換
+    # --- 信頼度の計算ロジック ---
+    # outputs.scores は各ステップごとの全語彙のロジット（未正規化の確率）が入ったタプルのリスト
+    # 実際に選択されたトークンの確率（Softmax）を取り出して平均を出す
+    probs = [F.softmax(score, dim=-1) for score in outputs.scores]
+    
+    # 各ステップで「実際に選ばれたID」に対応する確率を抽出
+    # generated_ids[0] には [SOS, token1, token2, ..., EOS] と入っているので1文字目から参照
+    confidences = []
+    for i, prob in enumerate(probs):
+        token_id = generated_ids[0][i + 1] # 0番目は開始トークンなので飛ばす
+        if token_id == processor.tokenizer.eos_token_id:
+            break
+        confidences.append(prob[0][token_id].item())
+
+    # 平均信頼度（文字がなければ0）
+    avg_confidence = sum(confidences) / len(confidences) if confidences else 0.0
+
+    # 既存のクレンジング処理
     text_fixed = text.replace('l', '1').replace('I', '1').replace('O', '0').replace('o', '0')
     digits_only = ''.join(c for c in text_fixed if c.isdigit())
 
-    confidence = 0.95 if len(digits_only) >= 1 else 0.2
-
-    return digits_only, confidence
-
+    return digits_only, avg_confidence
 
 # =====================
 # UI
