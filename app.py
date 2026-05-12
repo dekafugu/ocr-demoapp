@@ -172,7 +172,7 @@ div.stButton > button:hover { background: #333; }
 @st.cache_resource
 def load_trocr():
     from transformers import TrOCRProcessor, VisionEncoderDecoderModel
-    st.info("TrOCRモデルを読み込み中... 初回のみ時間がかかります")
+    st.info("モデルを読み込み中... 初回のみ時間がかかります")
     processor = TrOCRProcessor.from_pretrained("microsoft/trocr-base-handwritten")
     model = VisionEncoderDecoderModel.from_pretrained("microsoft/trocr-base-handwritten")
     model.eval()
@@ -285,7 +285,7 @@ def predict_with_trocr(processor, model, pil_img: Image.Image) -> tuple:
 st.markdown("""
 <div class="hero">
     <h1>🔢 手書き数字 読み取りAI</h1>
-    <p>書類の手書き数字を、AIが瞬時にデータ化します（TrOCR搭載）</p>
+    <p>書類の手書き数字を、AIが瞬時にデータ化します</p>
 </div>
 """, unsafe_allow_html=True)
 
